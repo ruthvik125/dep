@@ -58,8 +58,30 @@ def summarize_chunks(client, chunks):
     return summaries
 
 
-def recursive_summarization(client, text, chunk_size=2000, chunk_overlap=200):
-    """Recursively summarize text until it fits within the context length."""
+def estimate_request_count(text, chunk_size, chunk_overlap):
+    """Estimate the number of requests needed for summarization."""
+    # Estimate chunks based on text length and chunking parameters
+    num_chunks = len(text) // (chunk_size - chunk_overlap) + 1
+    return num_chunks
+
+
+def truncate_document(text, chunk_size, chunk_overlap, max_requests):
+    """Truncate the document to ensure the number of requests is within limits."""
+    max_text_length = (chunk_size - chunk_overlap) * max_requests
+    return text[:max_text_length]
+
+
+def recursive_summarization(client, text, chunk_size=2000, chunk_overlap=200, max_requests=20):
+    """Recursively summarize text while ensuring API request limits."""
+    # Estimate required requests
+    estimated_requests = estimate_request_count(text, chunk_size, chunk_overlap)
+    print(f"Estimated requests: {estimated_requests} (Max allowed: {max_requests})")
+    
+    # Truncate document if necessary
+    if estimated_requests > max_requests:
+        print("Document too long, truncating to fit within request limits.")
+        text = truncate_document(text, chunk_size, chunk_overlap, max_requests)
+    
     print("Splitting text into chunks...")
     chunks = split_text_into_chunks(text, chunk_size, chunk_overlap)
     
@@ -70,10 +92,11 @@ def recursive_summarization(client, text, chunk_size=2000, chunk_overlap=200):
     
     if len(split_text_into_chunks(combined_summary, chunk_size, chunk_overlap)) > 1:
         print("Combined summary exceeds context length. Recursing...")
-        return recursive_summarization(client, combined_summary, chunk_size, chunk_overlap)
+        return recursive_summarization(client, combined_summary, chunk_size, chunk_overlap, max_requests)
     
     print("Final summary generated.")
     return combined_summary
+
 
 
 def fetch_document(url):
@@ -114,7 +137,7 @@ def generate_mermaid_graph(graph):
     if response.status_code == 200:
         return Image.open(BytesIO(response.content))
     else:
-        st.error(f"Failed to fetch image. HTTP Status Code: {response.status_code}")
+        #st.error(f"Failed to fetch image. HTTP Status Code: {response.status_code}")
         return None
 
 # Function to fetch document content from a URL
@@ -124,25 +147,14 @@ def fetch_document(url):
     docs = loader.load()
     return " ".join(doc.page_content for doc in docs)
 
-# Function to handle user input and display chat history
-def handle_userinput(user_question: str,diagram_type_option:str, input_data: str = None) -> None:
+def handle_userinput(user_question: str, diagram_type_option: str, input_data: str = None) -> None:
     if user_question:
         try:
             with st.spinner('🤖 Summarizing the input...'):
                 # Summarize input data (code or document content)
-                summary = recursive_summarization(client,input_data) if input_data else None
-                #st.info(f"Summary:\n{summary}")
+                summary = recursive_summarization(client, input_data) if input_data else None
 
-            
-            modified_question_for_diagram_type = (
-                f"For this summary, which Mermaid diagram is suitable?\n{summary}\n"
-                "Options: Flowchart, Sequence Diagram, Class Diagram, State Diagram, Entity Relationship Diagram, "
-                "User Journey, Gantt, Pie Chart, Quadrant Chart, Requirement Diagram, Gitgraph (Git) Diagram, "
-                "C4 Diagram, Mindmaps, Timeline, ZenUML, Sankey, XY Chart, Block Diagram, Packet, Kanban, Architecture"
-            )
-           
-
-# Modify the logic to determine the diagram type
+            # Determine diagram type
             if diagram_type_option == "Automatic Detection":
                 with st.spinner('🤖 Determining the diagram type...'):
                     modified_question_for_diagram_type = (
@@ -156,33 +168,53 @@ def handle_userinput(user_question: str,diagram_type_option:str, input_data: str
             else:
                 diagram_type = diagram_type_option  # Use the type selected by the user
 
-            
-            
-            # Modify user question to include the summary for generating a Mermaid graph
-            modified_question = (
-                f"{user_question}\nBased on the following summary, generate a Mermaid {diagram_type}:\n{summary}.OUTPUT must only contain the mermaid code with proper formatting for the syntax"
-            )
+            # Generate Mermaid graph for the summary
+            diagram_types = [
+                "Flowchart", "Sequence Diagram", "Class Diagram", "State Diagram",
+                "Entity Relationship Diagram", "User Journey", "Gantt", "Pie Chart", "Quadrant Chart",
+                "Requirement Diagram", "Gitgraph (Git) Diagram", "C4 Diagram", "Mindmaps", "Timeline",
+                "ZenUML", "Sankey", "XY Chart", "Block Diagram", "Packet", "Kanban", "Architecture"
+            ]
 
-            with st.spinner('🤖 Generating response...'):
-                # Get response from model
-                resp_text = get_response(client, modified_question)
-                response = {"answer": f"{resp_text}"}
+            if diagram_type_option == "Automatic Detection":
+                fallback_diagram_types = diagram_types
+            else:
+                fallback_diagram_types = [diagram_type]
 
-            # Extract and generate Mermaid graph
-            mermaid_code = extract_mermaid_code(response['answer'])
-            if mermaid_code:
-                st.info("Rendering graph...")
-                graph_image = generate_mermaid_graph(mermaid_code)
-                if graph_image:
-                    # Use columns to display summary and graph side by side
-                    col1, col2 = st.columns([1, 1])  # Create two columns
-                    with col1:
-                        st.info("Summary:")
-                        st.write(summary)  # Display the summary in the first column
-                    with col2:
-                        st.image(graph_image, caption="Generated Mermaid Graph")  # Display the diagram in the second column
-                else:
-                    st.warning("Failed to generate graph.")
+            mermaid_code = None
+            done = False
+            st.info("Rendering graph...")
+                        
+            for diag_type in fallback_diagram_types:
+                # Modify user question to include the summary for generating a Mermaid graph
+                modified_question = (
+                    f"{user_question}\nBased on the following summary, generate a Mermaid {diag_type}:\n{summary}. OUTPUT must only contain the mermaid code with proper formatting for the syntax"
+                )
+                if done:
+                    break
+
+                with st.spinner(f'🤖 Generating a {diag_type}...'):
+                    resp_text = get_response(client, modified_question)
+                    mermaid_code = extract_mermaid_code(resp_text)
+                      # Exit the loop once a valid Mermaid code is generated
+
+            # Generate and display the graph
+                    if mermaid_code:
+                        graph_image = generate_mermaid_graph(mermaid_code)
+                        if graph_image:
+                            col1, col2 = st.columns([1, 1])  # Create two columns
+                            with col1:
+                                st.info("Summary:")
+                                st.write(summary)
+                            with col2:
+                                st.image(graph_image, caption="Generated Mermaid Graph")
+                            done = True
+            if not done:
+                col1, col2 = st.columns([1, 1])  # Create two columns
+                with col1:
+                                st.info("Summary:")
+                                st.write(summary)
+                st.error("Failed to graph for all diagram types.")
 
         except Exception as e:
             st.error(f"An error occurred while processing your question: {str(e)}")
@@ -208,7 +240,6 @@ def handle_userinput(user_question: str,diagram_type_option:str, input_data: str
                 unsafe_allow_html=True,
             )
 
-# Main function
 def main() -> None:
     # st.set_page_config(page_title=None, page_icon='🤖', layout="wide")
 
