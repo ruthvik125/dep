@@ -51,7 +51,7 @@ def summarize_chunks(client, chunks):
     """Generates a summary for each chunk."""
     summaries = []
     for idx, chunk in enumerate(chunks):
-        query = f"Please summarize the following text:\n\n{chunk}"
+        query = f"Please summarize the following text in less than 500 words:\n\n{chunk}"
         summary = get_response(client, query)
         summaries.append(summary)
         print(f"Chunk {idx + 1}/{len(chunks)} summarized.")
