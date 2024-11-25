@@ -6,3 +6,4 @@ requests
 langchain
 langchain-community
 tiktoken
+bs4
