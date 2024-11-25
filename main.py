@@ -71,7 +71,7 @@ def truncate_document(text, chunk_size, chunk_overlap, max_requests):
     return text[:max_text_length]
 
 
-def recursive_summarization(client, text, chunk_size=2000, chunk_overlap=200, max_requests=20):
+def recursive_summarization(client, text, chunk_size=2000, chunk_overlap=200, max_requests=10):
     """Recursively summarize text while ensuring API request limits."""
     # Estimate required requests
     estimated_requests = estimate_request_count(text, chunk_size, chunk_overlap)
